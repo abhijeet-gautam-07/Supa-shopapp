@@ -4,7 +4,7 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { revalidatePath } from 'next/cache';
 
-// 1. Create Client with Guest Header Support
+// 1. Create Client
 async function createClient(guestId?: string) {
   const cookieStore = await cookies();
   
@@ -22,8 +22,6 @@ async function createClient(guestId?: string) {
           }
         },
       },
-      // --- CRITICAL FIX FOR GUEST ACCESS ---
-      // This header MUST match what the SQL Policy is looking for
       global: {
         headers: guestId ? { 'x-guest-id': guestId } : {}
       }
@@ -31,14 +29,13 @@ async function createClient(guestId?: string) {
   );
 }
 
-// 2. Determine Owner
-async function getCartOwner() {
+// 2. Helper: Determine Owner (Safe for Read-Only calls)
+async function getCartOwner(createIfMissing = false) {
   const cookieStore = await cookies();
   
   // Check User
-  // We use a basic client here just to check auth status
-  const supabaseAuth = await createClient(); 
-  const { data: { user } } = await supabaseAuth.auth.getUser();
+  const supabase = await createClient(); 
+  const { data: { user } } = await supabase.auth.getUser();
 
   if (user) {
     return { type: 'user', id: user.id };
@@ -47,14 +44,20 @@ async function getCartOwner() {
   // Check Guest
   let guestId = cookieStore.get('guest_cart_id')?.value;
   
-  // If no guest cookie exists, generate one and set it
+  // If no guest cookie exists...
   if (!guestId) {
-    guestId = crypto.randomUUID();
-    cookieStore.set('guest_cart_id', guestId, { 
-      maxAge: 60 * 60 * 24 * 30, // 30 days
-      httpOnly: true, 
-      path: '/' 
-    }); 
+    if (createIfMissing) {
+      // ONLY set cookie if we are performing a write action (addToCart)
+      guestId = crypto.randomUUID();
+      cookieStore.set('guest_cart_id', guestId, { 
+        maxAge: 60 * 60 * 24 * 30, 
+        httpOnly: true, 
+        path: '/' 
+      }); 
+    } else {
+      // If reading, just return null so we don't crash the page render
+      return null;
+    }
   }
 
   return { type: 'guest', id: guestId };
@@ -63,14 +66,17 @@ async function getCartOwner() {
 // --- ACTIONS ---
 
 export async function getCart() {
-  const owner = await getCartOwner();
+  // Pass FALSE so we don't try to set cookies during page render
+  const owner = await getCartOwner(false);
   
-  // Pass guest ID to client creator if needed so RLS allows reading
+  // If no owner (Guest with no cookie yet), return empty cart
+  if (!owner) return [];
+
   const supabase = await createClient(owner.type === 'guest' ? owner.id : undefined);
 
   const query = supabase
     .from('cart_items')
-    .select('*, product(*)') // Join product table to get details
+    .select('*, product(*)')
     .order('created_at');
 
   if (owner.type === 'user') {
@@ -81,21 +87,24 @@ export async function getCart() {
 
   const { data, error } = await query;
   
-  if (error) {
-    return [];
-  }
+  if (error) return [];
   
+  // FIX: Convert BigInts to Numbers to prevent "Digest" error
   return (data || []).map(item => ({
     ...item.product,
+    i_id: Number(item.product.i_id), // Convert Product ID
+    price: Number(item.product.price),
     quantity: item.quantity,
-    cart_item_id: item.id 
+    cart_item_id: Number(item.id) // Convert Cart Item ID
   }));
 }
 
 export async function addToCart(productId: number) {
-  const owner = await getCartOwner();
+  // Pass TRUE because we need to create a guest session now
+  const owner = await getCartOwner(true);
   
-  // Pass guest ID to client creator so RLS allows the insert
+  if (!owner) return; // Should not happen with true
+
   const supabase = await createClient(owner.type === 'guest' ? owner.id : undefined);
 
   const payload: any = { 
@@ -114,27 +123,44 @@ export async function addToCart(productId: number) {
 }
 
 export async function removeFromCart(cartItemId: number) {
-  const owner = await getCartOwner();
+  const owner = await getCartOwner(false);
+  if (!owner) return;
+
   const supabase = await createClient(owner.type === 'guest' ? owner.id : undefined);
-  
   await supabase.from('cart_items').delete().eq('id', cartItemId);
   revalidatePath('/shop');
 }
 
 export async function checkout() {
-  const owner = await getCartOwner();
+  const owner = await getCartOwner(false);
+  if (!owner) return;
+
   const supabase = await createClient(owner.type === 'guest' ? owner.id : undefined);
   
   let query = supabase.from('cart_items').delete();
+  if (owner.type === 'user') query = query.eq('user_id', owner.id);
+  else query = query.eq('guest_id', owner.id);
   
-  if (owner.type === 'user') {
-    query = query.eq('user_id', owner.id);
-  } else {
-    query = query.eq('guest_id', owner.id);
-  }
-  
-  const { error } = await query;
-  if (error) console.error("Checkout Error:", error);
-  
+  await query;
   revalidatePath('/shop');
+}
+
+// Debugger Action
+export async function getDebugInfo() {
+  const cookieStore = await cookies();
+  const guestId = cookieStore.get('guest_cart_id')?.value || 'No Cookie';
+  
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+
+  const { data: rawItems } = await supabase.from('cart_items').select('id, product_id, user_id, guest_id');
+
+  // Convert BigInts here too for the debugger
+  const safeItems = rawItems?.map(i => ({...i, id: Number(i.id)})) || [];
+
+  return {
+    serverGuestCookie: guestId,
+    serverUserId: user?.id || 'Not Logged In',
+    cartItemsSnapshot: safeItems
+  };
 }
