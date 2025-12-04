@@ -11,7 +11,8 @@ interface Message {
   mdxSource?: MDXRemoteSerializeResult; // Compiled MDX (used for display)
 }
 
-// --- Custom MDX Components (Styling) ---
+// --- Custom MDX Components (Styling for Chat) ---
+// This transforms standard Markdown into a "Chat UI" look
 const mdxComponents = {
   // Links: Blue and open in new tab
   a: (props: any) => (
@@ -22,18 +23,24 @@ const mdxComponents = {
       rel="noopener noreferrer" 
     />
   ),
-  // Bold: Darker text
-  strong: (props: any) => <strong {...props} className="font-bold text-gray-900" />,
-  // Lists: Proper indentation and bullets
-  ul: (props: any) => <ul {...props} className="list-disc ml-4 my-2 space-y-1" />,
-  ol: (props: any) => <ol {...props} className="list-decimal ml-4 my-2 space-y-1" />,
-  li: (props: any) => <li {...props} className="leading-relaxed" />,
-  // Paragraphs: Spacing
-  p: (props: any) => <p {...props} className="mb-2 last:mb-0 leading-relaxed" />,
-  // Tables: Simple borders
-  table: (props: any) => <table {...props} className="min-w-full border-collapse border border-gray-300 my-2 text-xs" />,
-  th: (props: any) => <th {...props} className="border border-gray-300 px-2 py-1 bg-gray-100 font-semibold" />,
-  td: (props: any) => <td {...props} className="border border-gray-300 px-2 py-1" />,
+  // Bold: Used for Product Names usually
+  strong: (props: any) => <strong {...props} className="font-bold text-gray-900 block mt-1" />,
+  
+  // Lists: Transform bullets into spacing
+  ul: (props: any) => <div {...props} className="space-y-2 my-2" />,
+  ol: (props: any) => <div {...props} className="space-y-2 my-2" />,
+  
+  // List Items: Transform into "Product Cards"
+  li: (props: any) => (
+    <div {...props} className="bg-gray-50 p-3 rounded-lg border border-gray-100 text-sm hover:bg-gray-100 transition-colors" />
+  ),
+  
+  // Paragraphs: Relaxed spacing
+  p: (props: any) => <p {...props} className="mb-1 last:mb-0 leading-relaxed" />,
+  
+  // Headers: Small and bold
+  h1: (props: any) => <h3 {...props} className="font-bold text-base mt-2 mb-1" />,
+  h2: (props: any) => <h4 {...props} className="font-bold text-sm mt-2 mb-1" />,
 };
 
 export default function ChatWidget() {
@@ -60,7 +67,7 @@ export default function ChatWidget() {
     setLoading(true);
 
     try {
-      // 2. Prepare History (Send only raw text parts to API to save tokens/complexity)
+      // 2. Prepare History (Send only raw text parts to API)
       const historyToSend = messages.map(m => ({
         role: m.role,
         parts: [{ text: m.content }]
@@ -116,7 +123,7 @@ export default function ChatWidget() {
           </div>
 
           {/* Messages Area */}
-          <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
+          <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4 bg-white">
             {messages.length === 0 && (
               <div className="flex flex-col items-center justify-center h-full text-gray-400 text-sm opacity-70">
                 <Bot size={40} className="mb-2" />
@@ -127,7 +134,7 @@ export default function ChatWidget() {
             
             {messages.map((m, i) => (
               <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-                <div className={`max-w-[85%] p-3 rounded-2xl text-sm shadow-sm ${
+                <div className={`max-w-[90%] p-3 rounded-2xl text-sm shadow-sm ${
                   m.role === "user" 
                     ? "bg-blue-600 text-white rounded-br-none" 
                     : "bg-white border border-gray-200 text-gray-800 rounded-bl-none"

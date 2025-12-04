@@ -1,16 +1,22 @@
 import { NextResponse } from "next/server";
 import { GoogleGenAI, Type } from "@google/genai";
-import { serialize } from "next-mdx-remote/serialize"; // <--- MDX Serializer
+import { serialize } from "next-mdx-remote/serialize"; 
 import { searchProductsTool } from "@/utils/product-tool";
 
-// Configure Gemini
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
+// --- CRITICAL FIX: Prompt Engineering for Chat UI ---
 const SYSTEM_PROMPT = `
 You are the "Store Assistant". 
 - You are helpful, polite, and concise.
 - You have access to a tool called "search_products".
-- If the tool returns results, summarize them nicely using Markdown tables or lists.
+- DO NOT use Markdown tables. They break the chat UI.
+- When summarizing products, use a conversational list format like this:
+  
+  **Product Name** - $Price
+  _Short description or key details._
+
+- Keep responses short and easy to read on mobile.
 `;
 
 const toolFunctions: Record<string, Function> = {
@@ -42,7 +48,6 @@ export async function POST(req: Request) {
   try {
     const { message, history } = await req.json();
 
-    // 1. Prepare history for Gemini
     let contents = (history || []).map((msg: any) => ({
       role: msg.role,
       parts: msg.parts
@@ -52,7 +57,6 @@ export async function POST(req: Request) {
 
     let finalResponseText = "";
 
-    // 2. Loop for Tool Execution
     while (true) {
       const result = await ai.models.generateContent({
         model: "gemini-2.5-flash",
@@ -77,20 +81,18 @@ export async function POST(req: Request) {
         contents.push({ role: "model", parts: [{ functionCall }] });
         contents.push({ role: "user", parts: [{ functionResponse: functionResponsePart }] });
       } else {
-        // We have the final text
         finalResponseText = result.text || "";
         break;
       }
     }
 
-    // 3. SERIALIZE MDX (Server Side)
-    // This compiles the markdown string into a format next-mdx-remote can render
+    // Serialize MDX
     const mdxSource = await serialize(finalResponseText);
 
     return NextResponse.json({ 
       role: "model", 
-      content: finalResponseText, // Raw text (for history array)
-      mdxSource: mdxSource        // Compiled MDX (for display)
+      content: finalResponseText, 
+      mdxSource: mdxSource 
     });
 
   } catch (error: any) {
